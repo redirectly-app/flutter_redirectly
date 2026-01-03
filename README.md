@@ -309,7 +309,7 @@ See the [example app](./example) for a complete implementation.
 ## Support
 
 - 🐛 Issues: [GitHub Issues](https://github.com/redirectly-app/flutter_redirectly/issues)
-- 📚 Docs: [redirectly.app/docs](https://redirectly.app/docs)
+- 📚 Docs: [docs.redirectly.app/](https://docs.redirectly.app/)
 
 ## License
 
