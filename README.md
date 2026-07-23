@@ -1,6 +1,6 @@
 # Flutter Redirectly
 
-A Flutter package for creating and handling dynamic links using your own Redirectly backend. Pure Dart implementation - no native code required!
+A Flutter package for creating and handling dynamic links using your own Redirectly backend.
 
 ## Installation
 
@@ -118,6 +118,40 @@ void _handleAttributedInstall(RedirectlyAppInstallResponse install) {
 - Only standard app/device metadata
 - Tracking file prevents duplicate logging
 - All data stays within your Redirectly account
+
+#### Deterministic Android attribution (Install Referrer)
+
+Deferred deep link attribution used to match installs to prior link clicks
+only with a server side fingerprint (IP address and IP derived geo data).
+That match breaks when the device's IP changes between the link click and
+the first app launch, for example when switching from WiFi to cellular.
+
+Since 2.2.0 the SDK makes Android attribution deterministic automatically.
+When Redirectly redirects a user to the Play Store, it embeds the click
+identifier in the Google Play Install Referrer; on the first launch the SDK
+reads it back (via the bundled
+[`play_install_referrer`](https://pub.dev/packages/play_install_referrer)
+plugin) and the backend matches the exact click, regardless of IP changes.
+No setup is required.
+
+Notes:
+
+- The referrer is read once, on the first launch install tracking call, and
+  only on Android. On iOS, when Google Play Services are unavailable, or
+  when the read fails or takes longer than 5 seconds, the SDK simply omits
+  the referrer and the backend falls back to fingerprint matching.
+- Organic installs carry no Redirectly referrer and are reported as organic,
+  as before.
+- If you need a custom referrer source, the optional
+  `installReferrerProvider` callback in `RedirectlyConfig` overrides the
+  built-in read:
+
+```dart
+await redirectly.initialize(RedirectlyConfig(
+  apiKey: 'your-api-key-here',
+  installReferrerProvider: () async => myCustomReferrerSource(),
+));
+```
 
 ### 6. Create Links
 
@@ -241,8 +275,10 @@ try {
 ```dart
 RedirectlyConfig({
   required String apiKey,     // Your API key
-  String? baseUrl,           // Optional: custom domain
   bool enableDebugLogging,   // Optional: debug mode
+  InstallReferrerProvider? installReferrerProvider,
+  // Optional override for the built-in Play Install Referrer read
+  // (see section 5); omit it to use the bundled plugin automatically
 })
 ```
 

@@ -6,6 +6,7 @@ import 'package:app_links/app_links.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:play_install_referrer/play_install_referrer.dart';
 import 'package:rxdart/rxdart.dart';
 
 import '../flutter_redirectly.dart';
@@ -15,7 +16,9 @@ import 'version.dart';
 /// Implementation of Flutter Redirectly plugin
 ///
 /// This class provides functionality similar to Firebase Dynamic Links
-/// but uses your own Redirectly backend. No native code required!
+/// but uses your own Redirectly backend. Dart throughout, with one native
+/// touchpoint: the Play Install Referrer read (via play_install_referrer)
+/// for deterministic Android install attribution.
 final class FlutterRedirectlyImpl implements FlutterRedirectly {
   static final FlutterRedirectlyImpl _instance =
       FlutterRedirectlyImpl._internal();
@@ -92,7 +95,7 @@ final class FlutterRedirectlyImpl implements FlutterRedirectly {
 
       if (config.enableDebugLogging) {
         print(
-            'FlutterRedirectly v$packageVersion initialized successfully (Pure Dart - no native code!)');
+            'FlutterRedirectly v$packageVersion initialized successfully');
       }
 
       // Automatically track app install (one-time only)
@@ -837,6 +840,44 @@ final class FlutterRedirectlyImpl implements FlutterRedirectly {
     );
   }
 
+  /// Resolve the Google Play Install Referrer, by default via the
+  /// play_install_referrer plugin, or via the consumer provided override
+  /// callback when one is configured. Android only, best effort, never
+  /// throws: without a referrer the backend simply falls back to
+  /// fingerprint matching. play_install_referrer throws on non-Android
+  /// and when Google Play Services are unavailable; both end up in the
+  /// catch below, but the platform guard avoids pointless work.
+  Future<String?> _resolveInstallReferrer() async {
+    if (!Platform.isAndroid) {
+      return null;
+    }
+    final provider = _config?.installReferrerProvider;
+    try {
+      // The Play Install Referrer API needs a service connection that can
+      // stall on some devices; install tracking must not block on it.
+      final String? value;
+      if (provider != null) {
+        value = await provider().timeout(const Duration(seconds: 5));
+      } else {
+        final details = await PlayInstallReferrer.installReferrer
+            .timeout(const Duration(seconds: 5));
+        value = details.installReferrer;
+      }
+      if (value == null || value.isEmpty) {
+        return null;
+      }
+      if (_config?.enableDebugLogging == true) {
+        print('Install referrer resolved: $value');
+      }
+      return value;
+    } catch (e) {
+      if (_config?.enableDebugLogging == true) {
+        print('Failed to resolve install referrer: $e');
+      }
+      return null;
+    }
+  }
+
   /// Internal method to log app install
   Future<RedirectlyAppInstallResponse> _logAppInstallInternal() async {
     try {
@@ -844,6 +885,11 @@ final class FlutterRedirectlyImpl implements FlutterRedirectly {
       final deviceInfo = _deviceService.getDeviceInfo();
 
       final appInfo = await _getAppInfo();
+
+      // The Play Store redirect embeds the click identifier in the Install
+      // Referrer; when present the backend prefers it over its IP
+      // fingerprint, making deferred attribution deterministic on Android.
+      final installReferrer = await _resolveInstallReferrer();
 
       // Build request with device info
       final request = RedirectlyAppInstallRequest(
@@ -854,6 +900,7 @@ final class FlutterRedirectlyImpl implements FlutterRedirectly {
         osVersion: deviceInfo['os_version'] as String?,
         language: deviceInfo['language'] as String?,
         timezone: deviceInfo['timezone'] as String?,
+        installReferrer: installReferrer,
         metadata: {
           'flutter_plugin_version': packageVersion,
           'dart_version': deviceInfo['dart_version'],

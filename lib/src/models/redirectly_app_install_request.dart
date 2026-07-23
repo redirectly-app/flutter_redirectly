@@ -21,6 +21,9 @@ class RedirectlyAppInstallRequest {
   /// Device timezone
   final String? timezone;
 
+  /// Raw Google Play Install Referrer string (Android only)
+  final String? installReferrer;
+
   /// Additional metadata
   final Map<String, dynamic>? metadata;
 
@@ -32,6 +35,7 @@ class RedirectlyAppInstallRequest {
     this.osVersion,
     this.language,
     this.timezone,
+    this.installReferrer,
     this.metadata,
   });
 
@@ -46,6 +50,7 @@ class RedirectlyAppInstallRequest {
     if (osVersion != null) json['os_version'] = osVersion;
     if (language != null) json['language'] = language;
     if (timezone != null) json['timezone'] = timezone;
+    if (installReferrer != null) json['install_referrer'] = installReferrer;
     if (metadata != null) json['metadata'] = metadata;
 
     return json;
@@ -61,13 +66,14 @@ class RedirectlyAppInstallRequest {
       osVersion: json['os_version'] as String?,
       language: json['language'] as String?,
       timezone: json['timezone'] as String?,
+      installReferrer: json['install_referrer'] as String?,
       metadata: json['metadata'] as Map<String, dynamic>?,
     );
   }
 
   @override
   String toString() {
-    return 'RedirectlyAppInstallRequest{appPlatform: $appPlatform, appVersion: $appVersion, appBuildNumber: $appBuildNumber, os: $os, osVersion: $osVersion, language: $language, timezone: $timezone, metadata: $metadata}';
+    return 'RedirectlyAppInstallRequest{appPlatform: $appPlatform, appVersion: $appVersion, appBuildNumber: $appBuildNumber, os: $os, osVersion: $osVersion, language: $language, timezone: $timezone, installReferrer: $installReferrer, metadata: $metadata}';
   }
 }
 
