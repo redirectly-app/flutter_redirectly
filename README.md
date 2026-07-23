@@ -1,6 +1,6 @@
 # Flutter Redirectly
 
-A Flutter package for creating and handling dynamic links using your own Redirectly backend. Pure Dart implementation - no native code required!
+A Flutter package for creating and handling dynamic links using your own Redirectly backend.
 
 ## Installation
 
@@ -121,42 +121,37 @@ void _handleAttributedInstall(RedirectlyAppInstallResponse install) {
 
 #### Deterministic Android attribution (Install Referrer)
 
-By default, deferred deep link attribution matches installs to prior link
-clicks with a server side fingerprint (IP address and IP derived geo data).
-That match breaks when the device's IP changes between the link click and the
-first app launch, for example when switching from WiFi to cellular.
+Deferred deep link attribution used to match installs to prior link clicks
+only with a server side fingerprint (IP address and IP derived geo data).
+That match breaks when the device's IP changes between the link click and
+the first app launch, for example when switching from WiFi to cellular.
 
-On Android you can make attribution deterministic instead. When Redirectly
-redirects a user to the Play Store, it embeds the click identifier in the
-Play Install Referrer. Supply the referrer to the SDK via the optional
-`installReferrerProvider` callback and the backend will match the exact
-click, regardless of IP changes.
-
-The SDK stays pure Dart, so it does not read the referrer itself. Add the
-[`android_play_install_referrer`](https://pub.dev/packages/android_play_install_referrer)
-package (or any equivalent) to your app and wire it up:
-
-```dart
-import 'package:android_play_install_referrer/android_play_install_referrer.dart';
-
-await redirectly.initialize(RedirectlyConfig(
-  apiKey: 'your-api-key-here',
-  installReferrerProvider: () async {
-    final details = await AndroidPlayInstallReferrer.installReferrer;
-    return details.installReferrer;
-  },
-));
-```
+Since 2.2.0 the SDK makes Android attribution deterministic automatically.
+When Redirectly redirects a user to the Play Store, it embeds the click
+identifier in the Google Play Install Referrer; on the first launch the SDK
+reads it back (via the bundled
+[`play_install_referrer`](https://pub.dev/packages/play_install_referrer)
+plugin) and the backend matches the exact click, regardless of IP changes.
+No setup is required.
 
 Notes:
 
-- The callback is invoked once, on the first launch install tracking call,
-  and only on Android. On iOS or when the callback returns null, throws, or
-  takes longer than 5 seconds, the SDK simply omits the referrer and the
-  backend falls back to fingerprint matching.
-- Requires SDK 2.2.0+ and works for installs that came through a Redirectly
-  Play Store redirect. Organic installs carry no Redirectly referrer and are
-  reported as organic, as before.
+- The referrer is read once, on the first launch install tracking call, and
+  only on Android. On iOS, when Google Play Services are unavailable, or
+  when the read fails or takes longer than 5 seconds, the SDK simply omits
+  the referrer and the backend falls back to fingerprint matching.
+- Organic installs carry no Redirectly referrer and are reported as organic,
+  as before.
+- If you need a custom referrer source, the optional
+  `installReferrerProvider` callback in `RedirectlyConfig` overrides the
+  built-in read:
+
+```dart
+await redirectly.initialize(RedirectlyConfig(
+  apiKey: 'your-api-key-here',
+  installReferrerProvider: () async => myCustomReferrerSource(),
+));
+```
 
 ### 6. Create Links
 
@@ -282,8 +277,8 @@ RedirectlyConfig({
   required String apiKey,     // Your API key
   bool enableDebugLogging,   // Optional: debug mode
   InstallReferrerProvider? installReferrerProvider,
-  // Optional: returns the Google Play Install Referrer string for
-  // deterministic Android install attribution (see section 5)
+  // Optional override for the built-in Play Install Referrer read
+  // (see section 5); omit it to use the bundled plugin automatically
 })
 ```
 

@@ -12,7 +12,7 @@ export 'src/models/redirectly_link_extension.dart';
 /// Abstract interface for Flutter Redirectly plugin
 ///
 /// This interface provides functionality similar to Firebase Dynamic Links
-/// but using your own Redirectly backend. No native code required!
+/// but using your own Redirectly backend.
 abstract interface class FlutterRedirectly {
   /// Factory constructor that returns the singleton instance
   factory FlutterRedirectly() => FlutterRedirectlyImpl.instance;

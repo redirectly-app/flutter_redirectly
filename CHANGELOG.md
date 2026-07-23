@@ -7,16 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.2.0] - 2026-07-23
 
-- Added deterministic Android install attribution via the Google Play
-  Install Referrer. `RedirectlyConfig` accepts a new optional
-  `installReferrerProvider` callback; when it returns the referrer string
-  (for example via the `android_play_install_referrer` package), the SDK
-  sends it as `install_referrer` on the first launch `/api/v1/app-installs`
-  call and the backend matches the deferred click by the embedded click
-  identifier instead of the IP based fingerprint. Without the callback,
-  behavior is unchanged (fingerprint matching). The SDK itself stays pure
-  Dart: no native code or new dependencies. See the README section
-  "Deterministic Android attribution (Install Referrer)".
+- Added automatic deterministic Android install attribution via the Google
+  Play Install Referrer. On the first launch the SDK reads the referrer
+  through the bundled `play_install_referrer` plugin and sends it as
+  `install_referrer` on the `/api/v1/app-installs` call; the backend then
+  matches the deferred click by the embedded click identifier instead of
+  the IP based fingerprint. No setup required. On iOS, without Google Play
+  Services, or when the read fails or times out (5s), the field is omitted
+  and the backend falls back to fingerprint matching as before.
+- `RedirectlyConfig` accepts an optional `installReferrerProvider` callback
+  that overrides the built-in referrer read for custom sources.
+- NOTE: this reintroduces an Android native dependency
+  (`play_install_referrer`), ending the "pure Dart, no native code" stance
+  held since 2.0.0, and raises the minimums to Dart 3.7 / Flutter 3.29.
+  See the README section "Deterministic Android attribution
+  (Install Referrer)".
 
 ## [2.1.8] - 2026-07-23
 

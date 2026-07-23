@@ -11,15 +11,17 @@ class RedirectlyConfig {
   /// Whether to enable debug logging
   final bool enableDebugLogging;
 
-  /// Optional callback that supplies the Google Play Install Referrer
+  /// Optional override for how the Google Play Install Referrer is read
   /// (Android only, used once, on the first launch install tracking call).
   ///
-  /// When an install came through a Redirectly Play Store redirect, the
-  /// referrer carries the click identifier, which makes deferred deep link
-  /// attribution deterministic instead of relying on the server side IP
-  /// fingerprint (which breaks when the IP changes between click and first
-  /// launch). Keeping this a callback keeps the SDK free of native code;
-  /// see the README for a ready-made implementation.
+  /// By default the SDK reads the referrer itself via the
+  /// `play_install_referrer` plugin; when an install came through a
+  /// Redirectly Play Store redirect, the referrer carries the click
+  /// identifier, which makes deferred deep link attribution deterministic
+  /// instead of relying on the server side IP fingerprint (which breaks
+  /// when the IP changes between click and first launch). Supply this
+  /// callback only if you need a custom referrer source; returning null
+  /// falls back to fingerprint matching.
   final InstallReferrerProvider? installReferrerProvider;
 
   const RedirectlyConfig({
