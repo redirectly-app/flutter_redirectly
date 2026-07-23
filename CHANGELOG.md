@@ -5,6 +5,19 @@ All notable changes to the Flutter Redirectly plugin will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-07-23
+
+- Added deterministic Android install attribution via the Google Play
+  Install Referrer. `RedirectlyConfig` accepts a new optional
+  `installReferrerProvider` callback; when it returns the referrer string
+  (for example via the `android_play_install_referrer` package), the SDK
+  sends it as `install_referrer` on the first launch `/api/v1/app-installs`
+  call and the backend matches the deferred click by the embedded click
+  identifier instead of the IP based fingerprint. Without the callback,
+  behavior is unchanged (fingerprint matching). The SDK itself stays pure
+  Dart: no native code or new dependencies. See the README section
+  "Deterministic Android attribution (Install Referrer)".
+
 ## [2.1.8] - 2026-07-23
 
 - Fixed duplicate `/api/v1/app-installs` POST on first launch. Concurrent

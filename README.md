@@ -119,6 +119,45 @@ void _handleAttributedInstall(RedirectlyAppInstallResponse install) {
 - Tracking file prevents duplicate logging
 - All data stays within your Redirectly account
 
+#### Deterministic Android attribution (Install Referrer)
+
+By default, deferred deep link attribution matches installs to prior link
+clicks with a server side fingerprint (IP address and IP derived geo data).
+That match breaks when the device's IP changes between the link click and the
+first app launch, for example when switching from WiFi to cellular.
+
+On Android you can make attribution deterministic instead. When Redirectly
+redirects a user to the Play Store, it embeds the click identifier in the
+Play Install Referrer. Supply the referrer to the SDK via the optional
+`installReferrerProvider` callback and the backend will match the exact
+click, regardless of IP changes.
+
+The SDK stays pure Dart, so it does not read the referrer itself. Add the
+[`android_play_install_referrer`](https://pub.dev/packages/android_play_install_referrer)
+package (or any equivalent) to your app and wire it up:
+
+```dart
+import 'package:android_play_install_referrer/android_play_install_referrer.dart';
+
+await redirectly.initialize(RedirectlyConfig(
+  apiKey: 'your-api-key-here',
+  installReferrerProvider: () async {
+    final details = await AndroidPlayInstallReferrer.installReferrer;
+    return details.installReferrer;
+  },
+));
+```
+
+Notes:
+
+- The callback is invoked once, on the first launch install tracking call,
+  and only on Android. On iOS or when the callback returns null, throws, or
+  takes longer than 5 seconds, the SDK simply omits the referrer and the
+  backend falls back to fingerprint matching.
+- Requires SDK 2.2.0+ and works for installs that came through a Redirectly
+  Play Store redirect. Organic installs carry no Redirectly referrer and are
+  reported as organic, as before.
+
 ### 6. Create Links
 
 ```dart
@@ -241,8 +280,10 @@ try {
 ```dart
 RedirectlyConfig({
   required String apiKey,     // Your API key
-  String? baseUrl,           // Optional: custom domain
   bool enableDebugLogging,   // Optional: debug mode
+  InstallReferrerProvider? installReferrerProvider,
+  // Optional: returns the Google Play Install Referrer string for
+  // deterministic Android install attribution (see section 5)
 })
 ```
 

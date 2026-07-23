@@ -837,6 +837,33 @@ final class FlutterRedirectlyImpl implements FlutterRedirectly {
     );
   }
 
+  /// Resolve the Google Play Install Referrer via the consumer provided
+  /// callback, if any. Android only, best effort, never throws: without a
+  /// referrer the backend simply falls back to fingerprint matching.
+  Future<String?> _resolveInstallReferrer() async {
+    final provider = _config?.installReferrerProvider;
+    if (provider == null || !Platform.isAndroid) {
+      return null;
+    }
+    try {
+      // The Play Install Referrer API needs a service connection that can
+      // stall on some devices; install tracking must not block on it.
+      final value = await provider().timeout(const Duration(seconds: 5));
+      if (value == null || value.isEmpty) {
+        return null;
+      }
+      if (_config?.enableDebugLogging == true) {
+        print('Install referrer resolved: $value');
+      }
+      return value;
+    } catch (e) {
+      if (_config?.enableDebugLogging == true) {
+        print('Failed to resolve install referrer: $e');
+      }
+      return null;
+    }
+  }
+
   /// Internal method to log app install
   Future<RedirectlyAppInstallResponse> _logAppInstallInternal() async {
     try {
@@ -844,6 +871,11 @@ final class FlutterRedirectlyImpl implements FlutterRedirectly {
       final deviceInfo = _deviceService.getDeviceInfo();
 
       final appInfo = await _getAppInfo();
+
+      // The Play Store redirect embeds the click identifier in the Install
+      // Referrer; when present the backend prefers it over its IP
+      // fingerprint, making deferred attribution deterministic on Android.
+      final installReferrer = await _resolveInstallReferrer();
 
       // Build request with device info
       final request = RedirectlyAppInstallRequest(
@@ -854,6 +886,7 @@ final class FlutterRedirectlyImpl implements FlutterRedirectly {
         osVersion: deviceInfo['os_version'] as String?,
         language: deviceInfo['language'] as String?,
         timezone: deviceInfo['timezone'] as String?,
+        installReferrer: installReferrer,
         metadata: {
           'flutter_plugin_version': packageVersion,
           'dart_version': deviceInfo['dart_version'],
