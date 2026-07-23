@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:app_links/app_links.dart';
-import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
@@ -11,6 +10,7 @@ import 'package:rxdart/rxdart.dart';
 
 import '../flutter_redirectly.dart';
 import 'services/device_service.dart';
+import 'version.dart';
 
 /// Implementation of Flutter Redirectly plugin
 ///
@@ -48,11 +48,26 @@ final class FlutterRedirectlyImpl implements FlutterRedirectly {
   bool _initialized = false;
   StreamSubscription<Uri>? _linkSubscription;
 
-  /// Cached plugin version
-  String? _pluginVersion;
+  /// In-flight or completed initialize() call. Assigned before the first
+  /// await so concurrent initialize() calls share one initialization.
+  Future<void>? _initFuture;
+
+  /// In-flight or completed install tracking. Assigned before the first
+  /// await so the install POST cannot be issued twice in one process.
+  Future<void>? _installTrackingFuture;
 
   /// File name for tracking app install
   static const String _trackingFileName = '.redirectly_install_tracked';
+
+  /// Sentinel states: 'pending' claims the install before the POST,
+  /// 'tracked' means the POST succeeded, 'failed' means retry next launch.
+  static const String _statusPending = 'pending';
+  static const String _statusTracked = 'tracked';
+  static const String _statusFailed = 'failed';
+
+  /// How long a 'pending' claim suppresses a re-POST before it is assumed
+  /// to belong to a launch that died mid-flight and is retried.
+  static const Duration _pendingClaimTtl = Duration(minutes: 5);
 
   @override
 
@@ -63,6 +78,10 @@ final class FlutterRedirectlyImpl implements FlutterRedirectly {
           'FlutterRedirectly is already initialized');
     }
 
+    return _initFuture ??= _doInitialize(config);
+  }
+
+  Future<void> _doInitialize(RedirectlyConfig config) async {
     _config = config;
 
     try {
@@ -72,66 +91,17 @@ final class FlutterRedirectlyImpl implements FlutterRedirectly {
       _initialized = true;
 
       if (config.enableDebugLogging) {
-        final version = await _getPluginVersion();
         print(
-            'FlutterRedirectly v$version initialized successfully (Pure Dart - no native code!)');
+            'FlutterRedirectly v$packageVersion initialized successfully (Pure Dart - no native code!)');
       }
 
       // Automatically track app install (one-time only)
       await _trackAppInstallIfNeeded();
     } catch (e) {
+      // Allow the caller to retry a failed initialize()
+      _initFuture = null;
       throw RedirectlyError.configError('Failed to initialize: $e');
     }
-  }
-
-  /// Get the plugin version from pubspec.yaml
-  Future<String> _getPluginVersion() async {
-    if (_pluginVersion != null) return _pluginVersion!;
-
-    try {
-      // Try to read the pubspec.yaml from the plugin package
-      final pubspecString = await rootBundle
-          .loadString('packages/flutter_redirectly/pubspec.yaml');
-      final lines = pubspecString.split('\n');
-
-      for (String line in lines) {
-        if (line.trim().startsWith('version:')) {
-          _pluginVersion = line.split(':')[1].trim();
-          return _pluginVersion!;
-        }
-      }
-    } catch (e) {
-      // Fallback: try to read from the current package's pubspec.yaml
-      try {
-        final pubspecString = await rootBundle.loadString('pubspec.yaml');
-        final lines = pubspecString.split('\n');
-
-        // Check if this is the flutter_redirectly package itself
-        bool isRedirectlyPackage = false;
-        for (String line in lines) {
-          if (line.trim().startsWith('name:') &&
-              line.contains('flutter_redirectly')) {
-            isRedirectlyPackage = true;
-            break;
-          }
-        }
-
-        if (isRedirectlyPackage) {
-          for (String line in lines) {
-            if (line.trim().startsWith('version:')) {
-              _pluginVersion = line.split(':')[1].trim();
-              return _pluginVersion!;
-            }
-          }
-        }
-      } catch (e2) {
-        // Ignore and use fallback
-      }
-    }
-
-    // Fallback version if we can't read from pubspec.yaml
-    _pluginVersion = '2.0.1';
-    return _pluginVersion!;
   }
 
   /// Set up app links for handling deep links
@@ -652,9 +622,6 @@ final class FlutterRedirectlyImpl implements FlutterRedirectly {
         }
       });
 
-      // Get plugin version dynamically
-      final pluginVersion = await _getPluginVersion();
-
       // Collect device information
       final clickData = <String, dynamic>{
         'slug': slug,
@@ -667,7 +634,7 @@ final class FlutterRedirectlyImpl implements FlutterRedirectly {
         'timezone': DateTime.now().timeZoneOffset.toString(),
         'metadata': {
           'original_url': originalUri.toString(),
-          'flutter_plugin_version': pluginVersion,
+          'flutter_plugin_version': packageVersion,
           'dart_version': _getDartVersion(),
         },
       };
@@ -695,7 +662,7 @@ final class FlutterRedirectlyImpl implements FlutterRedirectly {
       if (_config!.enableDebugLogging) {
         if (response.statusCode == 200) {
           print(
-              'Mobile click logged successfully: $username/$slug (plugin v$pluginVersion)');
+              'Mobile click logged successfully: $username/$slug (plugin v$packageVersion)');
         } else {
           print(
               'Failed to log mobile click: ${response.statusCode} ${response.body}');
@@ -727,7 +694,11 @@ final class FlutterRedirectlyImpl implements FlutterRedirectly {
   }
 
   /// Track app install if it hasn't been tracked yet
-  Future<void> _trackAppInstallIfNeeded() async {
+  Future<void> _trackAppInstallIfNeeded() {
+    return _installTrackingFuture ??= _trackAppInstallOnce();
+  }
+
+  Future<void> _trackAppInstallOnce() async {
     try {
       final hasBeenLogged = await _hasAppInstallBeenTracked();
 
@@ -736,13 +707,23 @@ final class FlutterRedirectlyImpl implements FlutterRedirectly {
           print('First app launch detected - tracking app install');
         }
 
-        final response = await _logAppInstallInternal();
+        // Claim the install before the POST so a launch that dies mid-flight
+        // is visible to the next one (see _hasAppInstallBeenTracked)
+        await _writeTrackingSentinel(_statusPending);
+
+        RedirectlyAppInstallResponse response;
+        try {
+          response = await _logAppInstallInternal();
+        } catch (e) {
+          // Downgrade the claim to a retry marker: the next launch re-POSTs
+          await _writeTrackingSentinel(_statusFailed);
+          rethrow;
+        }
 
         // Emit the app install event to the stream
         _appInstallSubject.add(response);
 
-        // Mark as logged regardless of success to avoid repeated attempts
-        await _markAppInstallAsTracked();
+        await _writeTrackingSentinel(_statusTracked);
 
         if (_config?.enableDebugLogging == true) {
           if (response.matched) {
@@ -770,7 +751,37 @@ final class FlutterRedirectlyImpl implements FlutterRedirectly {
     try {
       final directory = await getApplicationDocumentsDirectory();
       final file = File('${directory.path}/$_trackingFileName');
-      return await file.exists();
+      if (!await file.exists()) {
+        return false;
+      }
+
+      Map<String, dynamic> data;
+      try {
+        data = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+      } catch (_) {
+        // Unreadable or legacy sentinel (pre-2.1.8 wrote no status field).
+        // Treat as tracked rather than risk a duplicate install POST.
+        return true;
+      }
+
+      switch (data['status']) {
+        case _statusFailed:
+          // Retry marker from a failed POST: re-POST on this launch
+          return false;
+        case _statusPending:
+          // Claim from a launch that never finished. A recent claim is
+          // likely still in flight in another launch; an expired one is
+          // assumed dead and retried to keep at-least-once delivery.
+          final attemptedAt =
+              DateTime.tryParse(data['attempted_at'] as String? ?? '');
+          if (attemptedAt == null) {
+            return false;
+          }
+          return DateTime.now().difference(attemptedAt) < _pendingClaimTtl;
+        default:
+          // 'tracked', or a legacy sentinel without a status field
+          return true;
+      }
     } catch (e) {
       if (_config?.enableDebugLogging == true) {
         print('Error checking install tracking file: $e');
@@ -780,26 +791,31 @@ final class FlutterRedirectlyImpl implements FlutterRedirectly {
     }
   }
 
-  /// Mark app install as tracked by creating tracking file
-  Future<void> _markAppInstallAsTracked() async {
+  /// Write the install tracking sentinel with the given status
+  Future<void> _writeTrackingSentinel(String status) async {
     try {
       final directory = await getApplicationDocumentsDirectory();
       final file = File('${directory.path}/$_trackingFileName');
 
-      // Create a simple tracking file with timestamp
+      final now = DateTime.now().toIso8601String();
       final data = {
-        'tracked_at': DateTime.now().toIso8601String(),
-        'plugin_version': await _getPluginVersion(),
+        'status': status,
+        // attempted_at ages out a dead pending claim; tracked_at matches
+        // the pre-2.1.8 sentinel field
+        if (status == _statusPending) 'attempted_at': now,
+        if (status == _statusTracked) 'tracked_at': now,
+        if (status == _statusFailed) 'last_attempt_at': now,
+        'plugin_version': packageVersion,
       };
 
       await file.writeAsString(jsonEncode(data));
 
       if (_config?.enableDebugLogging == true) {
-        print('App install tracking file created at: ${file.path}');
+        print('App install tracking file written ($status): ${file.path}');
       }
     } catch (e) {
       if (_config?.enableDebugLogging == true) {
-        print('Error creating install tracking file: $e');
+        print('Error writing install tracking file: $e');
       }
       // Don't throw - tracking failure shouldn't break the app
     }
@@ -827,9 +843,6 @@ final class FlutterRedirectlyImpl implements FlutterRedirectly {
       // Collect device information
       final deviceInfo = _deviceService.getDeviceInfo();
 
-      // Get plugin version
-      final pluginVersion = await _getPluginVersion();
-
       final appInfo = await _getAppInfo();
 
       // Build request with device info
@@ -842,7 +855,7 @@ final class FlutterRedirectlyImpl implements FlutterRedirectly {
         language: deviceInfo['language'] as String?,
         timezone: deviceInfo['timezone'] as String?,
         metadata: {
-          'flutter_plugin_version': pluginVersion,
+          'flutter_plugin_version': packageVersion,
           'dart_version': deviceInfo['dart_version'],
           'platform': deviceInfo['platform'],
           'is_mobile': deviceInfo['is_mobile'],
@@ -905,5 +918,7 @@ final class FlutterRedirectlyImpl implements FlutterRedirectly {
     _httpClient.close();
     _initialized = false;
     _config = null;
+    _initFuture = null;
+    _installTrackingFuture = null;
   }
 }
